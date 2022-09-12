@@ -111,13 +111,20 @@ func (rc *RegClient) ManifestPut(ctx context.Context, r ref.Ref, m manifest.Mani
 	return schemeAPI.ManifestPut(ctx, r, m, opt.schemeOpts...)
 }
 
-func (rc *RegClient) truncatePlatformsFromManifest(ctx context.Context, refM ref.Ref, m manifest.Manifest, platforms []string) (manifest.Manifest, error) {
+func (rc *RegClient) truncatePlatformsFromManifest(ctx context.Context, refM ref.Ref, m manifest.Manifest, platforms []string, checkMissing bool) (manifest.Manifest, error) {
 	if m == nil {
 		return nil, nil
 	}
 
 	newManifestList := []types.Descriptor{}
-
+	missingPlatforms := make(map[string]bool)
+	for _, platformStr := range platforms {
+		p, err := platform.Parse(platformStr)
+		if err != nil {
+			return nil, err
+		}
+		missingPlatforms[p.String()] = true
+	}
 	switch m.GetDescriptor().MediaType {
 	case types.MediaTypeDocker2ManifestList:
 		if manifestList, err := m.(manifest.Indexer).GetManifestList(); err != nil {
@@ -127,6 +134,7 @@ func (rc *RegClient) truncatePlatformsFromManifest(ctx context.Context, refM ref
 				if ok, err := imagePlatformInList(oldManifest.Platform, platforms); err != nil {
 					return nil, err
 				} else if ok {
+					missingPlatforms[oldManifest.Platform.String()] = false
 					newManifestList = append(newManifestList, oldManifest)
 				}
 			}
@@ -153,21 +161,36 @@ func (rc *RegClient) truncatePlatformsFromManifest(ctx context.Context, refM ref
 			Variant:      ociConfig.Variant,
 			Features:     ociConfig.OSFeatures,
 		}
-
 		if ok, err := imagePlatformInList(&plat, platforms); err != nil {
 			return nil, err
 		} else if ok {
+			missingPlatforms[plat.String()] = false
 			newManifestList = append(newManifestList, m.GetDescriptor())
 		}
 
 	default:
 		return nil, fmt.Errorf("operation is not implemented")
 	}
-	if len(newManifestList) > 0 {
+	missingPlatformsList := []string{}
+	for key, val := range missingPlatforms {
+		if val {
+			missingPlatformsList = append(missingPlatformsList, key)
+		}
+	}
+	if checkMissing && len(missingPlatformsList) > 0 {
+		return nil, fmt.Errorf("image %s is missing the following requested platforms: %v", refM.Reference, missingPlatformsList)
+	}
+	if len(newManifestList) == 0 {
+		return nil, nil
+	} else if len(newManifestList) == 1 {
+		if newManifestList[0].Digest == m.GetDescriptor().Digest {
+			return m, nil
+		}
+		return rc.ManifestGet(ctx, refM, WithManifestDesc(newManifestList[0]))
+	} else {
 		return manifest.New(manifest.WithOrig(schema2.ManifestList{
 			Versioned: schema2.ManifestListSchemaVersion,
 			Manifests: newManifestList,
 		}))
 	}
-	return nil, nil
 }

@@ -170,7 +170,7 @@ func init() {
 
 	imageCopyCmd.Flags().BoolVarP(&imageOpts.forceRecursive, "force-recursive", "", false, "Force recursive copy of image, repairs missing nested blobs and manifests")
 	imageCopyCmd.Flags().BoolVarP(&imageOpts.includeExternal, "include-external", "", false, "Include external layers")
-	imageCopyCmd.Flags().StringArrayVarP(&imageOpts.platforms, "platforms", "", []string{}, "Copy only specific platforms, registry validation must be disabled")
+	imageCopyCmd.Flags().StringArrayVarP(&imageOpts.platforms, "platform", "", []string{}, "Copy only specific platforms (the target manifest might be rewritten)")
 	imageCopyCmd.Flags().BoolVarP(&imageOpts.digestTags, "digest-tags", "", false, "Include digest tags (\"sha256-<digest>.*\") when copying manifests")
 	imageCopyCmd.Flags().BoolVarP(&imageOpts.referrers, "referrers", "", false, "Experimental: Include referrers")
 
