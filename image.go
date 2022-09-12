@@ -381,6 +381,9 @@ func (rc *RegClient) ImageCopy(ctx context.Context, refSrc ref.Ref, refTgt ref.R
 	for _, optFn := range opts {
 		optFn(&opt)
 	}
+	if len(opt.platforms) > 0 {
+		return rc.imageCopyOptPlatforms(ctx, refSrc, refTgt, types.Descriptor{}, opt.child, &opt)
+	}
 	return rc.imageCopyOpt(ctx, refSrc, refTgt, types.Descriptor{}, opt.child, &opt)
 }
 
@@ -648,6 +651,155 @@ func (rc *RegClient) imageCopyOpt(ctx context.Context, refSrc ref.Ref, refTgt re
 				}
 			}
 		}
+	}
+
+	return nil
+}
+
+
+
+
+func (rc *RegClient) imageCopyOptPlatforms(ctx context.Context, refSrc ref.Ref, refTgt ref.Ref, d types.Descriptor, child bool, opt *imageOpt) error {
+	if len(opt.platforms) == 0 {
+		return fmt.Errorf("please specify a list of platforms")
+	}
+
+
+	mOpts := []ManifestOpts{}
+	if child {
+		mOpts = append(mOpts, WithManifestChild())
+	}
+	// check if scheme/refTgt prefers parent manifests pushed first
+	// if so, this should automatically set forceRecursive
+	tgtSI, err := rc.schemeInfo(refTgt)
+	if err != nil {
+		return fmt.Errorf("failed looking up scheme for %s: %v", refTgt.CommonName(), err)
+	}
+	if tgtSI.ManifestPushFirst {
+		opt.forceRecursive = true
+	}
+
+	// get the manifest for the source
+	msrc, err := rc.ManifestGet(ctx, refSrc, WithManifestDesc(d))
+	if err != nil {
+		rc.log.WithFields(logrus.Fields{
+			"ref": refSrc.Reference,
+			"err": err,
+		}).Warn("Failed to get source manifest")
+		return err
+	}
+
+	sourceMan, errS := rc.truncatePlatformsFromManifest(ctx, refSrc, msrc, opt.platforms)
+
+	if errS != nil {
+		rc.log.WithFields(logrus.Fields{
+			"ref": refSrc.Reference,
+			"err": errS,
+		}).Warn("Failed to rewrite source manifest")
+		return errS
+	}
+	if sourceMan == nil {
+		rc.log.WithFields(logrus.Fields{
+			"ref": refSrc.Reference,
+		}).Warn("Source Image does not contain specified platforms")
+		return fmt.Errorf("source image does not contain specified platforms")
+	}
+	// check if source and destination already match
+	mtgt, errD := rc.ManifestGet(ctx, refTgt)
+
+	tgtMan, errD := rc.truncatePlatformsFromManifest(ctx, refTgt, mtgt, opt.platforms)
+	if errD != nil {
+		rc.log.WithFields(logrus.Fields{
+			"ref": refTgt.Reference,
+			"err": errD,
+		}).Warn("Failed to rewrite tgt manifest")
+		return errD
+	}
+
+	if opt.forceRecursive {
+		// copy forced, unable to run below skips
+	} else if errD == nil && refTgt.Digest != "" && digest.Digest(refTgt.Digest) == mtgt.GetDescriptor().Digest {
+		rc.log.WithFields(logrus.Fields{
+			"target": refTgt.Reference,
+			"digest": mtgt.GetDescriptor().Digest.String(),
+		}).Info("Copy not needed, target already up to date")
+		return nil
+	} else if errD == nil && refTgt.Digest == "" {
+		if sourceMan != nil && tgtMan != nil && sourceMan.GetDescriptor().Digest == tgtMan.GetDescriptor().Digest {
+			rc.log.WithFields(logrus.Fields{
+				"source": refSrc.Reference,
+				"target": refTgt.Reference,
+				"digest": sourceMan.GetDescriptor().Digest.String(),
+			}).Info("Copy not needed, target already up to date")
+			return nil
+		}
+	}
+
+	if !ref.EqualRepository(refSrc, refTgt) {
+		// copy components of the image if the repository is different
+		if mi, ok := sourceMan.(manifest.Indexer); ok {
+			// manifest lists need to recursively copy nested images by digest
+			pd, err := mi.GetManifestList()
+			if err != nil {
+				return err
+			}
+
+			for _, entry := range pd {
+				// skip copy of platforms not specifically included
+				match, err := imagePlatformInList(entry.Platform, opt.platforms)
+				if err != nil {
+					return err
+				}
+				if !match {
+					rc.log.WithFields(logrus.Fields{
+						"platform": entry.Platform,
+					}).Debug("Platform excluded from copy")
+					continue
+				}
+			
+				rc.log.WithFields(logrus.Fields{
+					"platform": entry.Platform,
+					"digest":   entry.Digest.String(),
+				}).Debug("Copy platform")
+				entrySrc := refSrc
+				entryTgt := refTgt
+				entrySrc.Tag = ""
+				entryTgt.Tag = ""
+				entrySrc.Digest = entry.Digest.String()
+				entryTgt.Digest = entry.Digest.String()
+				switch entry.MediaType {
+				case types.MediaTypeDocker1Manifest, types.MediaTypeDocker1ManifestSigned,
+					types.MediaTypeDocker2Manifest, types.MediaTypeDocker2ManifestList,
+					types.MediaTypeOCI1Manifest, types.MediaTypeOCI1ManifestList:
+					// known manifest media type
+					err = rc.imageCopyOpt(ctx, entrySrc, entryTgt, entry, true, opt)
+				case types.MediaTypeDocker2ImageConfig, types.MediaTypeOCI1ImageConfig,
+					types.MediaTypeDocker2LayerGzip, types.MediaTypeOCI1Layer, types.MediaTypeOCI1LayerGzip,
+					types.MediaTypeBuildkitCacheConfig:
+					// known blob media type
+					err = rc.BlobCopy(ctx, entrySrc, entryTgt, entry)
+				default:
+					// unknown media type, first try an image copy
+					err = rc.imageCopyOpt(ctx, entrySrc, entryTgt, entry, true, opt)
+					if err != nil {
+						// fall back to trying to copy a blob
+						err = rc.BlobCopy(ctx, entrySrc, entryTgt, entry)
+					}
+				}
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	// push manifest to target
+	err = rc.ManifestPut(ctx, refTgt, sourceMan, mOpts...)
+	if err != nil {
+		rc.log.WithFields(logrus.Fields{
+			"target": refTgt.Reference,
+			"err":    err,
+		}).Warn("Failed to push manifest")
+		return err
 	}
 
 	return nil

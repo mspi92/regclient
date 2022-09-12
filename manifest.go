@@ -2,11 +2,14 @@ package regclient
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/regclient/regclient/scheme"
 	"github.com/regclient/regclient/types"
 	"github.com/regclient/regclient/types/manifest"
 	"github.com/regclient/regclient/types/ref"
+	"github.com/regclient/regclient/types/platform"
+	"github.com/regclient/regclient/types/docker/schema2"
 )
 
 type manifestOpt struct {
@@ -106,4 +109,68 @@ func (rc *RegClient) ManifestPut(ctx context.Context, r ref.Ref, m manifest.Mani
 		return err
 	}
 	return schemeAPI.ManifestPut(ctx, r, m, opt.schemeOpts...)
+}
+
+
+func (rc *RegClient) truncatePlatformsFromManifest(ctx context.Context, refM ref.Ref, m manifest.Manifest, platforms []string) (manifest.Manifest, error) {
+	if m == nil {
+		return nil, nil
+	}
+	
+	
+	
+	newManifestList := []types.Descriptor{}
+		
+	switch m.GetDescriptor().MediaType {
+	case types.MediaTypeDocker2ManifestList:
+		if manifestList, err := m.(manifest.Indexer).GetManifestList(); err != nil {
+			return nil, err
+		} else {
+			for _, oldManifest := range manifestList {
+				if ok, err := imagePlatformInList(oldManifest.Platform, platforms); err != nil {
+					return nil, err
+				} else if ok {
+					newManifestList = append(newManifestList, oldManifest)
+				} 
+			}
+		}
+	case types.MediaTypeDocker2Manifest:
+		
+		configDescriptor, err := m.(manifest.Imager).GetConfig()
+		if err != nil {
+			return nil, err
+		}
+		blobConfig, err := rc.BlobGetOCIConfig(ctx, refM, configDescriptor)
+		if err != nil {
+			return nil, err
+		}
+		ociConfig := blobConfig.GetConfig()
+		if ociConfig.OS == "" {
+			return nil, nil
+		}
+		plat := platform.Platform{
+			OS:           ociConfig.OS,
+			Architecture: ociConfig.Architecture,
+			OSVersion:    ociConfig.OSVersion,
+			OSFeatures:   ociConfig.OSFeatures,
+			Variant:      ociConfig.Variant,
+			Features:     ociConfig.OSFeatures,
+		}
+
+		if ok, err := imagePlatformInList(&plat, platforms); err != nil {
+			return nil, err
+		} else if ok {
+			newManifestList = append(newManifestList, m.GetDescriptor())
+		} 
+		
+	default:
+		return nil, fmt.Errorf("operation is not implemented")
+	}
+	if len(newManifestList) > 0 {
+		return manifest.New(manifest.WithOrig(schema2.ManifestList{
+			Versioned: schema2.ManifestListSchemaVersion,
+			Manifests: newManifestList,
+		}))
+	}
+	return nil, nil
 }
