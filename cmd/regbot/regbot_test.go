@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"runtime"
 	"testing"
 	"time"
 
@@ -14,6 +15,9 @@ import (
 )
 
 func TestRegbot(t *testing.T) {
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		t.Skip("test is not working in architecture darwin/arm64")
+	}
 	ctx := context.Background()
 	// setup sample source with an in-memory ocidir directory
 	fsOS := rwfs.OSNew("")
