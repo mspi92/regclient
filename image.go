@@ -656,14 +656,10 @@ func (rc *RegClient) imageCopyOpt(ctx context.Context, refSrc ref.Ref, refTgt re
 	return nil
 }
 
-
-
-
 func (rc *RegClient) imageCopyOptPlatforms(ctx context.Context, refSrc ref.Ref, refTgt ref.Ref, d types.Descriptor, child bool, opt *imageOpt) error {
 	if len(opt.platforms) == 0 {
 		return fmt.Errorf("please specify a list of platforms")
 	}
-
 
 	mOpts := []ManifestOpts{}
 	if child {
@@ -705,7 +701,7 @@ func (rc *RegClient) imageCopyOptPlatforms(ctx context.Context, refSrc ref.Ref, 
 		return fmt.Errorf("source image does not contain specified platforms")
 	}
 	// check if source and destination already match
-	mtgt, errD := rc.ManifestGet(ctx, refTgt)
+	mtgt, _ := rc.ManifestGet(ctx, refTgt)
 
 	tgtMan, errD := rc.truncatePlatformsFromManifest(ctx, refTgt, mtgt, opt.platforms)
 	if errD != nil {
@@ -756,7 +752,7 @@ func (rc *RegClient) imageCopyOptPlatforms(ctx context.Context, refSrc ref.Ref, 
 					}).Debug("Platform excluded from copy")
 					continue
 				}
-			
+
 				rc.log.WithFields(logrus.Fields{
 					"platform": entry.Platform,
 					"digest":   entry.Digest.String(),

@@ -6,10 +6,10 @@ import (
 
 	"github.com/regclient/regclient/scheme"
 	"github.com/regclient/regclient/types"
-	"github.com/regclient/regclient/types/manifest"
-	"github.com/regclient/regclient/types/ref"
-	"github.com/regclient/regclient/types/platform"
 	"github.com/regclient/regclient/types/docker/schema2"
+	"github.com/regclient/regclient/types/manifest"
+	"github.com/regclient/regclient/types/platform"
+	"github.com/regclient/regclient/types/ref"
 )
 
 type manifestOpt struct {
@@ -111,16 +111,13 @@ func (rc *RegClient) ManifestPut(ctx context.Context, r ref.Ref, m manifest.Mani
 	return schemeAPI.ManifestPut(ctx, r, m, opt.schemeOpts...)
 }
 
-
 func (rc *RegClient) truncatePlatformsFromManifest(ctx context.Context, refM ref.Ref, m manifest.Manifest, platforms []string) (manifest.Manifest, error) {
 	if m == nil {
 		return nil, nil
 	}
-	
-	
-	
+
 	newManifestList := []types.Descriptor{}
-		
+
 	switch m.GetDescriptor().MediaType {
 	case types.MediaTypeDocker2ManifestList:
 		if manifestList, err := m.(manifest.Indexer).GetManifestList(); err != nil {
@@ -131,11 +128,11 @@ func (rc *RegClient) truncatePlatformsFromManifest(ctx context.Context, refM ref
 					return nil, err
 				} else if ok {
 					newManifestList = append(newManifestList, oldManifest)
-				} 
+				}
 			}
 		}
 	case types.MediaTypeDocker2Manifest:
-		
+
 		configDescriptor, err := m.(manifest.Imager).GetConfig()
 		if err != nil {
 			return nil, err
@@ -161,8 +158,8 @@ func (rc *RegClient) truncatePlatformsFromManifest(ctx context.Context, refM ref
 			return nil, err
 		} else if ok {
 			newManifestList = append(newManifestList, m.GetDescriptor())
-		} 
-		
+		}
+
 	default:
 		return nil, fmt.Errorf("operation is not implemented")
 	}
